@@ -1,0 +1,178 @@
+---
+title: "Hackathon Project Task 1"
+author: "Xiaohan (Julia) Wu"
+date: "`r format(Sys.time(), '%B %d, %Y | %H:%M:%S | %Z')`"
+output:
+  html_document:
+    code_folding: show
+    df_print: paged
+    highlight: tango
+    number_sections: no
+    theme: cosmo
+    toc: no
+---
+  
+<style>
+div.answer {background-color:#f3f0ff; border-radius: 5px; padding: 20px;}
+</style>
+
+
+```{r, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE,
+                      eval = TRUE,
+                      error = FALSE,
+                      message = FALSE,
+                      warning = FALSE,
+                      comment = NA)
+```
+
+<!-- Do not forget to input your Github username in the YAML configuration up there --> juliawuxh
+
+***
+
+```{r, include = T}
+library(tidyverse)
+library(gt)
+library(gtExtras)
+library(dplyr)
+library(ggplot2)
+library(haven)
+```
+
+<br>
+
+### Task 1.4 - Perceived hatefulness of social media post
+
+Create a gt/gtExtras table that reports the aggregated perceived hatefulness of a set of social media posts, following good practice of visualization. For this task, consider the following:
+
+1. Some guidance for the data preparation:
+ - The content of the social media posts is stored in two types of variables:
+vig_{x}_topic and vig_{x}_sender_message. Every respondent evaluated 8 different messages, which is why x goes from 1 to 8. The perception of hatefulness is stored in the variables vig_{x}_hateful.
+ - Drop observations where vig_1_hateful is missing.
+ - Recode the vig_{x}_topic variables according to the following scheme:
+gender = "Women", ideologydems = "Democrats", ideologyreps = "Republicans", muslim = "Muslim immigrants".
+ - Construct the full content of the message by pasting together the strings
+of the recoded vig_{x}_topic and vig_{x}_sender_message variables. For instance, one of the full messages reads: “Republicans should be stopped from spreading falsehoods.”
+ - For the evaluation, you should average across all evaluated vignettes across all responses, i.e. your unit of analysis is vignettes, not respondents.
+
+2. Your table should contain the following information: (1) The message text, (2) the mean and standard deviation of the hatefulness rating by message, and (3) a barplot displaying the distribution of hatefulness ratings 1 to 5 per message.
+
+3. The average hatefulness column should be colored by value.
+
+4. The table should provide a meaningful title and description, making it a
+standalone product that speaks for itself.
+
+```{r}
+# Load the RDS file containing survey data
+meof_usa_survey_df <- readRDS("~/Hackathon proj individual/survey/meof_usa_survey_df.RDS")
+# Create a new dataframe
+df <- meof_usa_survey_df
+# Display the first few rows to check
+head(df)
+```
+#### Step 1: Data preparation
+```{r}
+df <- df %>%
+  drop_na(vig_1_hateful) # Drop NA for vig_1_hateful
+
+# Initialize an empty dataframe for results
+result_df <- data.frame(message_text = character(), hateful_rating = integer(), stringsAsFactors = FALSE)
+
+# Loop through vig_1 to vig_8
+for (x in 1:8) {
+  # Create dynamic column names for topic, sender message, and hateful columns
+  topic_column <- sym(paste("vig_", x, "_topic", sep = ""))
+  sender_message_column <- sym(paste("vig_", x, "_sender_message", sep = ""))
+  hateful_column <- sym(paste("vig_", x, "_hateful", sep = ""))
+  
+  # Recode the topic column and put into message_text column 
+  df <- df %>%
+    mutate( 
+      !!topic_column := recode(!!topic_column,
+        "gender" = "Women",
+        "ideologydems" = "Democrats",
+        "ideologyreps" = "Republicans",
+        "muslim" = "Muslim immigrants"
+      ),
+      message_text = paste(!!topic_column, !!sender_message_column, sep = " ")
+    )
+  
+  # Create a temporary dataframe with personid, message_text, and hateful_rating
+  result_df <- df %>%
+    select(message_text, hateful_rating = !!sym(hateful_column)) %>%
+    filter(!is.na(hateful_rating))  # Remove rows with NA in hateful_rating column
+}
+
+# Print the result dataframe
+head(result_df)
+
+# Sanity check so far
+# df$message_text
+# df$vig_8_topic
+# df$vig_1_sender_message
+```
+
+#### Step 2: Calculate the average hatefulness for each unique message_text
+```{r}
+# Calculate the average hateful rating and standard deviation for each unique message_text
+result_df <- result_df %>%
+  group_by(message_text) %>%
+  reframe(
+    hateful_rating = hateful_rating,
+    avg_hateful_rating = mean(hateful_rating, na.rm = TRUE),
+    std_hateful_rating = sd(hateful_rating, na.rm = TRUE)
+  ) 
+
+# Print the evaluation_df
+head(result_df)
+```
+#### Step 3: Create the gt table
+```{r}
+# Create gt table
+gt_table <- result_df %>%
+  group_by(message_text) %>%
+  reframe( 
+    message_text = message_text,
+    hateful_rating = list(hateful_rating),
+    avg_hateful_rating = as.numeric(avg_hateful_rating),
+    std_hateful_rating = as.numeric(std_hateful_rating)
+  ) %>%
+  distinct() %>% # Remove duplicates for message_text
+  rename( # Rename column for better visual
+    "Message" = message_text,
+    "Average Rating" = avg_hateful_rating,
+    "Standard Deviation" = std_hateful_rating,
+    "Hateful Rating" = hateful_rating
+  ) %>%
+  gt() %>%
+  gt_theme_espn() %>%
+  tab_header(
+    title = "Aggregated Perceived Hatefulness of Social Media Posts",
+    subtitle = "This table displays the average and standard deviation of hatefulness ratings by survey participants for each unique message. The ratings range from 1 - 'Not hateful at all' to 5 - 'Extremely Hateful'"
+  ) %>%
+  fmt_number( # Format numerical columns with 2 decimals
+    columns = c("Average Rating", "Standard Deviation"),
+    decimals = 2
+  ) %>%
+  tab_spanner( # Group ratings under spanner
+    label = "1|2|3|4|5",
+    columns = "Hateful Rating"
+  ) %>%
+  gt_plt_dist( # Add histograms of ratings
+    "Hateful Rating",
+    type = "histogram",
+    fig_dim = c(10,30),
+    line_color = "black",
+    fill_color = "grey",
+    bw = 1
+  ) %>%
+  data_color( # Color data based on Average Rating
+    columns = "Average Rating",
+    target_columns = "Average Rating",
+    palette = c("yellow", "red")
+  ) %>%
+  tab_source_note(md("Data source: The Media Exposure and Opinion Formation (MEOF) study - USA. The vignette experiment was conducted in 2019.")) 
+
+# Print the gt table
+gt_table
+```
